@@ -143,19 +143,16 @@ int main (int argc, char **argv)
 		exit (2);
 	}
 
-	printf("opening file in required mode \n");
+	printf("Opening file- %s in %s mode \n", filename, (opcode == WRQ ? "Read": "Write") );
 	if(opcode == WRQ)
 		fp = fopen (filename, "r");	
 	else if(opcode == RRQ)
 		fp = fopen (filename, "w");		
-	if (fp == NULL){
+	if (fp == NULL)
+	{
 		printf ("Client: file could not be opened\n");
 		return 0;
 	}
-	if(opcode == WRQ)
-		printf ("Client: The file name is: %s and can be read\n", filename);
-	else if(opcode == RRQ)
-		printf ("Client: The file name is: %s and it has been created\n", filename);
 	fclose (fp);		
 
 
@@ -185,14 +182,12 @@ int main (int argc, char **argv)
 	memset (buf, 0, BUFSIZ);
 	// creates RRQ packet
 	len = req_packet (opcode, filename, mode, buf);
-
 	if (sendto (sock, buf, len, 0, (struct sockaddr *) &server, server_len) != len)
 	{
 		perror ("Client: sendto has returend an error");
 		exit(-1);
 	}
-	if (debug)
-		ip_port (server);
+	printf("%s packet sent\n", (opcode==1 ? "RRQ":"WRQ"));
 	switch (opcode)
 	{
 		case RRQ:
@@ -233,7 +228,6 @@ int req_packet (int opcode, char *filename, char *mode, char header[])
 		printf ("Error in creating the request packet\n");	/*could not print to the client buffer */
 		exit(-1);
 	}
-	printf ("RRQ packet created.\n");
 	return lenght;
 }
 
@@ -301,8 +295,6 @@ void tsend (char *pFilename, struct sockaddr_in server, char *pMode, int sock)
 		printf ("Client: file - %s not found or permissions denied\n", filename);
 		return;
 	}
-	else
-		printf ("Client: PUTting file - %s\n", filename);
 
 	//get ACK for WRQ
 	/* The following 'for' loop is used to recieve/timeout ACKs */
@@ -403,30 +395,30 @@ void tsend (char *pFilename, struct sockaddr_in server, char *pMode, int sock)
 		len = 4 + ssize;
 		packetbuf[bcount][2] = (count & 0xFF00) >> 8;	//fill in the count (top number first)
 		packetbuf[bcount][3] = (count & 0x00FF);	//fill in the lower part of the count
-		if (debug)
-			printf ("Client: Sending packet # %04d (length: %d file chunk: %d)\n",
-					count, len, ssize);
+	
+		// printf("Client: Sending packet - %04d \n", count);
 		/* send the data packet */
-		if (sendto
-				(sock, packetbuf[bcount], len, 0, (struct sockaddr *) &server,
-				 sizeof (server)) != len)
+		if (sendto(sock, packetbuf[bcount], len, 0, (struct sockaddr *) &server, sizeof (server)) != len)
 		{
-			if (debug)
-				printf ("Client: Mismatch in number of sent bytes\n");
+			perror ("Client: sendto has returend an error");
 			return;
 		}
-		if (debug)
-		{
-			ip_port (server);
-			printf ("==count: %d  bcount: %d  ssize: %d  datasize: %d\n", count,
-					bcount, ssize, datasize);
-		}
-		//if ((count - 1) == 0 || ((count - 1) % ackfreq) == 0 || ssize != datasize)
+		printf("Client: Packet- %d sent\n", count);
+
+		// if (debug)
+		// {
+		// 	ip_port (server);
+		// 	printf ("==count: %d  bcount: %d  ssize: %d  datasize: %d\n", count,
+		// 			bcount, ssize, datasize);
+		// }
+
+		/* if ((count - 1) == 0 || ((count - 1) % ackfreq) == 0 || ssize != datasize) */
 		if (((count) % ackfreq) == 0 || ssize != datasize)
 		{
-			if (debug)
-				printf ("-- I will get an ACK\n");
-			/* The following 'for' loop is used to recieve/timeout ACKs */
+			// if (debug)
+			// 	printf ("-- I will get an ACK\n");
+			// send ACK packets and handle errors
+			/* This loop is used to recieve/timeout ACKs */
 			for (j = 0; j < RETRIES; j++)
 			{
 				server_len = sizeof (ack);
@@ -434,63 +426,35 @@ void tsend (char *pFilename, struct sockaddr_in server, char *pMode, int sock)
 				n = -1;
 				for (i = 0; errno == EAGAIN && i <= TIMEOUT && n < 0; i++)
 				{
-					n =
-						recvfrom (sock, recvbuf, sizeof (recvbuf), MSG_DONTWAIT,
-								(struct sockaddr *) &ack,
-								(socklen_t *) & server_len);
-					/* if (debug)
-					   ip_port(ack); */
+					n=recvfrom (sock, recvbuf, sizeof (recvbuf), MSG_DONTWAIT,(struct sockaddr *) &ack,(socklen_t *) & server_len);
 					usleep (1000);
 				}
 				if (n < 0 && errno != EAGAIN)
-				{
-					if (debug)
-						printf
-							("Client: could not receive from the server (errno: %d n: %d)\n",
-							 errno, n);
-					//resend packet
-				}
+					printf("Client: Server not responding. errno: %d n: %d\n",errno, n);
+					// need to resend the packet
 				else if (n < 0 && errno == EAGAIN)
-				{
-					if (debug)
-						printf
-							("Client: Timeout waiting for ack (errno: %d n: %d)\n",
-							 errno, n);
+					printf("Client: ACK not received, Timed out. errno: %d n: %d\n",errno, n);
 					//resend packet
-				}
 				else
-				{		/* checks to ensure send to ip is same from ACK IP */
+				{		/* sent to wrong destination */
 					if (server.sin_addr.s_addr != ack.sin_addr.s_addr)
 					{
-						if (debug)
-							printf
-								("Client: Error recieving ACK (ACK from invalid address)\n");
-						/* in this case someone else connected to our port. Ignore this fact and retry getting the ack */
-						j--;
+						printf("Client: Error: ACK received from invalid address)\n");
+						j--; 	// resume retries
 						continue;
 					}
 					if (tid != ntohs (server.sin_port))	/* checks to ensure get from the correct TID */
 					{
-						if (debug)
-							printf
-								("Client: Error recieving file (data from invalid tid)\n");
+						printf("Client: Error: data received from invalid tid)\n");
 						len = err_packet (5, err_msg[5], buf);
 						/* send the data packet */
-						if (sendto
-								(sock, buf, len, 0, (struct sockaddr *) &server,
-								 sizeof (server)) != len)
-						{
-							printf
-								("Client: Mismatch in number of sent bytes while trying to send mode error packet\n");
-						}
-						/*if (debug)
-						  ip_port(server);  */
+						if (sendto(sock, buf, len, 0, (struct sockaddr *) &server, sizeof (server)) != len)
+							perror ("Client: sendto has returend an error");
 						j--;
-
-						continue;	/* we aren't going to let another connection spoil our first connection */
+						continue;	 // optional-  we aren't going to let another connection spoil our first connection */
 					}
 
-					/* this formatting code is just like the code in the main function */
+					/* this formatting code is just like the code in the tsend function */
 					bufindex = (char *) recvbuf;	//start our pointer going
 					if (bufindex++[0] != 0x00)
 						printf ("Client: bad first nullbyte!\n");
@@ -499,85 +463,60 @@ void tsend (char *pFilename, struct sockaddr_in server, char *pMode, int sock)
 					rcount = *bufindex++ << 8;
 					rcount &= 0xff00;
 					rcount += (*bufindex++ & 0x00ff);
+					// for error handling ...
 					if (opcode != 4 || rcount != count)	/* ack packet should have code 4 (ack) and should be acking the packet we just sent */
 					{
-						if (debug)
-							printf
-								("Client: Remote host failed to ACK proper data packet # %d (got OP: %d Block: %d)\n",
-								 count, opcode, rcount);
+						printf("Client:Host failed to send correct ACK - %d \n",count);
 						/* sending error message */
 						if (opcode > 5)
 						{
 							len = err_packet (4, err_msg[4], buf);
 							if (sendto (sock, buf, len, 0, (struct sockaddr *) &server, sizeof (server)) != len)	/* send the data packet */
-							{
-								printf
-									("Client: Mismatch in number of sent bytes while trying to send mode error packet\n");
-							}
-							/*if (debug)
-							  ip_port(server); */
+								perror ("Client: sendto has returend an error");
 						}
 						/* from here we will loop back and resend */
 					}
 					else
 					{
-						if (debug)
-							printf
-								("Client: Remote host successfully ACK'd (#%d)\n",
-								 rcount);
+						printf("Client: Received ACK- %d\n", rcount);
 						break;
 					}
 				}
 				for (i = 0; i <= bcount; i++)
 				{
-					if (sendto (sock, packetbuf[i], len, 0, (struct sockaddr *) &server, sizeof (server)) != len)	/* resend the data packet */
+					if (sendto(sock, packetbuf[i], len, 0, (struct sockaddr *) &server, sizeof (server)) != len)	/* resend the data packet */
 					{
-						if (debug)
-							printf ("Client: Mismatch in number of sent bytes\n");
+						perror ("Client: sendto has returend an error");
 						return;
 					}
-					if (debug)
-					{
-						printf ("Client: Ack(s) lost. Resending: %d\n",
-								count - bcount + i);
-						ip_port (server);
-					}
+					printf("Client: ACK lost. Retransmitting ACK- %d\n",count - bcount + i);
 				}
-				if (debug)
-					printf ("Client: Ack(s) lost. Resending complete.\n");
-
+				// printf ("Client: ACK lost. Resending complete.\n");
 			}
 			/* The ack sending 'for' loop ends here */
 
 		}
 		else if (debug)
 		{
-			printf
-				("Client: Not attempting to recieve ack. Not required. count: %d\n",
-				 count);
-			n = recvfrom (sock, recvbuf, sizeof (recvbuf), MSG_DONTWAIT, (struct sockaddr *) &ack, (socklen_t *) & server_len);	/* just do a quick check incase the remote host is trying with ackfreq = 1 */
-			/*if (debug)
-			  ip_port(ack); */
+			printf("Client: Not attempting to recieve ack. Not required. count: %d\n", count);
+			n = recvfrom (sock, recvbuf, sizeof (recvbuf), MSG_DONTWAIT, (struct sockaddr *) &ack, (socklen_t *) & server_len);
 		}
 
 		if (j == RETRIES)
 		{
-			if (debug)
-				printf ("Client: Ack Timeout. Aborting transfer\n");
+			printf("Client: ACK Timed out. Suspending transfer\n");
+			printf("closing the file...\n");
 			fclose (fp);
-
 			return;
 		}
 		if (ssize != datasize)
 			break;
-
-		memset (filebuf, 0, sizeof (filebuf));	/* fill the filebuf with zeros so that when the fread fills it, it is a null terminated string */
+		// for next loop iteration
+		memset (filebuf, 0, sizeof (filebuf));
 	}
-
+	printf("closing the file...\n");
 	fclose (fp);
-	if (debug)
-		printf ("Client: File sent successfully\n");
-
+	printf ("Client: File sent successfully\n");
 	return;
 }				//end of tsend function
 
