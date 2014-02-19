@@ -7,7 +7,7 @@ int isnotvaliddir (char *);
 void usage (void);
 
 /* default values which can be controlled by command line */
-int debug = 1;
+int debug = 0;
 char path[64] = "/home/ravi/tftp-1.0/server";
 int port = 69;
 unsigned short int ackfreq = 1;
