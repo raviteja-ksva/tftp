@@ -150,7 +150,7 @@ int main (int argc, char **argv)
 		fp = fopen (filename, "w");		
 	if (fp == NULL)
 	{
-		printf ("Client: file could not be opened\n");
+		printf ("Client: file could not be opened: file not found or permission denied\n");
 		return 0;
 	}
 	fclose (fp);		
